@@ -94,7 +94,9 @@ def convert_to_serializable(obj):
 # ==================== 数据集配置 ====================
 # Default location is `<repo_root>/dataset/test/` relative to this file. Override
 # with the PAGRPO_DATASET_DIR environment variable to point elsewhere.
-_DEFAULT_DATASET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset", "test")
+_DEFAULT_DATASET_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dataset", "test"
+)
 DATASET_DIR = os.environ.get("PAGRPO_DATASET_DIR", _DEFAULT_DATASET_DIR)
 
 DATASETS = {

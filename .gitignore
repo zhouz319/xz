@@ -8,6 +8,13 @@ eval_results/
 # Internal work log (not for public release)
 WORK_LOG.md
 
+# Upstream verl requirements files — kept locally for reference, not part of PA-GRPO release
+requirements_sglang.txt
+requirements_transferqueue.txt
+requirements-cuda.txt
+requirements-npu.txt
+requirements-verl-upstream.txt
+
 **/*.pt
 **/checkpoints
 **/wget-log

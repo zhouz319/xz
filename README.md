@@ -6,11 +6,9 @@ This repository provides the implementation of **PA-GRPO (Permutation-Aware Grou
 > [`0eb50ec4`](https://github.com/volcengine/verl/commit/0eb50ec4a33cda97e05ed8caab9c7f17a30c05a9) (v0.7.0.dev).
 > Upstream directories (`docker/`, `docs/`, `examples/`, `recipe/`, `tests/`,
 > `CONTRIBUTING.md`, `.pre-commit-config.yaml`, `.readthedocs.yaml`, `setup.py`,
-> `pyproject.toml`, plus the unused `requirements_sglang.txt` /
-> `requirements_transferqueue.txt` / `requirements-cuda.txt` /
-> `requirements-npu.txt`) are kept verbatim for traceability and **are not part
-> of the PA-GRPO contribution**. Every PA-GRPO addition or modification is
-> listed in [`CHANGES.md`](./CHANGES.md).
+> `pyproject.toml`) are kept verbatim for traceability and **are not part of
+> the PA-GRPO contribution**. Every PA-GRPO addition or modification is listed
+> in [`CHANGES.md`](./CHANGES.md).
 
 ## 📋 Overview
 
@@ -78,9 +76,10 @@ PA-GRPO/
 │   ├── run_mcq_qwen.sh        # MCQ training with Qwen
 │   ├── run_judge_llama.sh     # Judge training with Llama
 │   └── run_judge_qwen.sh      # Judge training with Qwen
-├── evaluate_models.py          # Run inference with vLLM/Transformers, write per-sample JSON
-├── compute_metrics_judge.py    # Acc / Con / CA for pairwise (P=2) Judge benchmarks
-├── compute_metrics_mcq.py      # Acc / Con / CA for MCQ (P=24, full permutation expansion)
+├── evaluation/                 # Inference & metrics
+│   ├── evaluate_models.py     # Run inference (vLLM/Transformers), write per-sample JSON
+│   ├── compute_metrics_judge.py  # Acc / Con / CA for pairwise (P=2) Judge benchmarks
+│   └── compute_metrics_mcq.py    # Acc / Con / CA for MCQ (P=24, full permutation expansion)
 ├── verl/                       # verl framework source code (modified)
 ├── requirements.txt            # PA-GRPO direct dependencies (default install)
 ├── requirements-lock.txt       # Pinned `pip freeze` lock for exact reproduction
@@ -135,8 +134,8 @@ tensorboard --logdir=logs/
 
 ### 5. Evaluate
 
-Evaluation runs in two stages: inference with `evaluate_models.py`, then metrics with
-`compute_metrics_{judge,mcq}.py`.
+Evaluation runs in two stages: inference with `evaluation/evaluate_models.py`, then metrics
+with `evaluation/compute_metrics_{judge,mcq}.py`.
 
 **Evaluation data is not shipped with this repository.** Download or build the test
 parquets yourself for the seven benchmarks reported in the paper (MT-Bench, JudgeBench,
@@ -146,17 +145,17 @@ files under `dataset/test/`. (Or set `PAGRPO_DATASET_DIR` to wherever they live.
 
 ```bash
 # Run inference (greedy by default; pass --temperature > 0 to sample)
-python evaluate_models.py \
+python evaluation/evaluate_models.py \
     --model_path /path/to/checkpoints/global_step_300 \
     --base_model_path /path/to/Meta-Llama-3.1-8B-Instruct \
     --mode think \
     --batch_size 32
 
 # Compute Acc / Con / CA for pairwise Judge benchmarks (P=2)
-python compute_metrics_judge.py ./eval_results/<run_dir>/
+python evaluation/compute_metrics_judge.py ./eval_results/<run_dir>/
 
 # Compute Acc / Con / CA for MCQ benchmarks (P=24, full permutation expansion)
-python compute_metrics_mcq.py ./eval_results/<run_dir>/
+python evaluation/compute_metrics_mcq.py ./eval_results/<run_dir>/
 ```
 
 Both `compute_metrics_*` scripts can take a single results JSON or a directory; given a
@@ -166,33 +165,12 @@ summary alongside them.
 
 ## 📊 Datasets
 
-`dataset/train/` ships eight pre-built parquets covering the two tasks
-(MCQ / Judge), the two `raw` / `filter` variants, and two chat-template formats
-(`_think` for Llama, `_thinking` for Qwen).
-
-| File | Task | Variant | For model | Rows | Permutations per instance |
-|---|---|---|---|---|---|
-| `mmlu_raw_5perm_think.parquet`             | MCQ   | raw    | Llama | 29,295 | 5 (Π = {ABCD, BCDA, CDAB, DABC, DCBA}) |
-| `mmlu_raw_5perm_thinking.parquet`          | MCQ   | raw    | Qwen3 | 29,295 | 5 |
-| `mmlu_filter_5perm_think.parquet`          | MCQ   | filter | Llama |  5,545 | 5 |
-| `mmlu_filter_5perm_thinking.parquet`       | MCQ   | filter | Qwen3 |  5,545 | 5 |
-| `chatbot_arena_raw_2perm_think.parquet`    | Judge | raw    | Llama | 12,152 | 2 (Π = {AB, BA}) |
-| `chatbot_arena_raw_2perm_thinking.parquet` | Judge | raw    | Qwen3 | 12,152 | 2 |
-| `chatbot_arena_filter_2perm_think.parquet` | Judge | filter | Llama |  2,960 | 2 |
-| `chatbot_arena_filter_2perm_thinking.parquet` | Judge | filter | Qwen3 |  2,960 | 2 |
-
-- **`raw`** — every instance whose original base model exhibits inconsistent
-  predictions across permutations (i.e., the full set with selection bias).
-  This is what the training scripts in `scripts/run_*.sh` use by default.
-- **`filter`** — a smaller "hard subset" pre-filtered against a specific base
-  model; each row's `extra_info` carries the base model's answer and CoT.
-  Use this if you want to train only on the most challenging examples.
-- **`_think` vs `_thinking`** — same data, different chat-template tag
-  (`<think>` for Llama, `<thinking>` for Qwen3). Pick the one matching your
-  policy model.
-
-To switch between `raw` and `filter`, edit `data.train_files` /
-`data.val_files` in the corresponding `scripts/run_*.sh`.
+`dataset/train/` ships eight pre-built parquets covering both tasks (MCQ / Judge),
+two variants (`raw` = all permutation-inconsistent instances; `filter` = a smaller
+hard subset), and two chat-template tags (`_think` for Llama, `_thinking` for Qwen3).
+Pick the one matching your task and policy model — the training scripts in
+`scripts/run_*.sh` default to `raw`. To use `filter`, edit `data.train_files` /
+`data.val_files` in the corresponding script.
 
 ## 🔧 Key Modifications
 
@@ -211,11 +189,12 @@ To switch between `raw` and `filter`, edit `data.train_files` /
 If you find PA-GRPO useful in your research, please cite:
 
 ```bibtex
-@misc{zheng2026pagrpo,
-  title  = {Mitigating Selection Bias in Large Language Models via Permutation-Aware GRPO},
-  author = {Zheng, Jinquan and Yuan, Jia and Yao, Jiacheng and Gu, Chenyang and Zheng, Pujun and He, Guoxiu},
-  year   = {2026},
-  note   = {Code: \url{https://github.com/ECNU-Text-Computing/PA-GRPO}}
+@article{zheng2026mitigating,
+  title   = {Mitigating Selection Bias in Large Language Models via Permutation-Aware GRPO},
+  author  = {Zheng, Jinquan and Yuan, Jia and Yao, Jiacheng and Gu, Chenyang and Zheng, Pujun and He, Guoxiu},
+  journal = {arXiv preprint arXiv:2603.21016},
+  year    = {2026},
+  note    = {To appear in ACL 2026}
 }
 ```
 

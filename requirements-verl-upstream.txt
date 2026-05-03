@@ -1,6 +1,3 @@
-# Original `requirements.txt` from upstream verl (kept here for reference only).
-# PA-GRPO uses ./requirements.txt instead. See ./CHANGES.md.
-#
 # requirements.txt records the full set of dependencies for development
 accelerate
 codetiming
@@ -19,7 +16,7 @@ ray[default]
 tensordict>=0.8.0,<=0.10.0,!=0.9.0
 torchdata
 transformers
-vllm>=0.8.5
+# vllm==0.8.4
 wandb
 packaging>=20.0
 uvicorn

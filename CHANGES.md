@@ -26,17 +26,17 @@ relative to that upstream snapshot.
   — Single-entry scripts that launch `verl.trainer.main_ppo` with the PA-GRPO reward
   function and the appropriate Permutation Group dataset.
 
-### Evaluation scripts (project root)
+### Evaluation scripts — `evaluation/`
 
-- `evaluate_models.py` — Inference driver. Loads a HF / LoRA / merged checkpoint with
+- `evaluation/evaluate_models.py` — Inference driver. Loads a HF / LoRA / merged checkpoint with
   vLLM (or Transformers fallback), runs the test parquets under `dataset/test/`
   (overridable via `$PAGRPO_DATASET_DIR`), and writes per-sample JSON results.
   Default decoding is greedy (`temperature=0`) to match the deterministic numbers
   reported in the paper.
-- `compute_metrics_judge.py` — Computes Accuracy / Consistency / Consistent
+- `evaluation/compute_metrics_judge.py` — Computes Accuracy / Consistency / Consistent
   Accuracy plus appendix-only RStd / CKLD for the pairwise (P = 2) Judge
   benchmarks (MT-Bench, JudgeBench, PreferenceBench, RewardBench, ...).
-- `compute_metrics_mcq.py` — Same metrics for the 4-option MCQ benchmarks
+- `evaluation/compute_metrics_mcq.py` — Same metrics for the 4-option MCQ benchmarks
   (ARC-Challenge, TinyMMLU, GPQA, ...) under P = 24 Full Permutation Expansion;
   per Eq. 10 of the paper, ties (no unique mode) count as fragmentation and are
   scored as inconsistent for CA.
@@ -68,8 +68,6 @@ Chat-template:
 
 - `requirements-lock.txt` — Pinned full-environment `pip freeze` lock used in our experiments
   (Linux, Python 3.12, CUDA 12.4).
-- `requirements-verl-upstream.txt` — Verbatim copy of upstream verl's original
-  `requirements.txt` (kept for traceability; not used during install).
 - `CHANGES.md` — This file.
 
 ## Modified files (relative to upstream verl)
@@ -94,7 +92,6 @@ Two PA-GRPO-specific additions:
 
 Replaced upstream verl's `requirements.txt` with a PA-GRPO-tailored version that pins
 the actual versions used in our experiments (e.g. `torch==2.6.0`, `vllm==0.8.5`,
-`transformers>=4.57.0`). The original upstream file is preserved verbatim at
-`requirements-verl-upstream.txt` for reference.
+`transformers>=4.57.0`).
 
 No other verl files have been modified.
