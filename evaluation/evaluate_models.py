@@ -11,56 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Inference / evaluation script for PA-GRPO.
-
-Generates model responses on the test parquets and writes per-sample JSON
-results that ``compute_metrics_judge.py`` / ``compute_metrics_mcq.py`` then
-turn into Acc / Con / CA numbers (see Section 4.2 of the paper).
-
-Backends:
-  1. vLLM (default) — fast batched inference; supports LoRA adapters directly.
-  2. Transformers (``--use_transformers``) — slower per-sample fallback.
-
-Supported model layouts:
-  1. Plain HF model — load with vLLM directly.
-  2. LoRA checkpoint — vLLM loads base model + LoRA adapter dynamically.
-  3. Merged full HF model — auto-detected and loaded with vLLM.
-
-Test data is read from $PAGRPO_DATASET_DIR or `<repo_root>/dataset/test/`. The
-test parquets are NOT shipped with this repository; please download / generate
-them yourself (see README.md).
-
-Examples:
-
-  # 1. Evaluate a base HF model
-  python evaluate_models.py \\
-      --model_path /path/to/Meta-Llama-3.1-8B-Instruct \\
-      --mode direct \\
-      --batch_size 32
-
-  # 2. Evaluate a LoRA checkpoint (requires --base_model_path)
-  python evaluate_models.py \\
-      --model_path /path/to/checkpoints/global_step_300 \\
-      --base_model_path /path/to/Meta-Llama-3.1-8B-Instruct \\
-      --mode think \\
-      --batch_size 32
-
-  # 3. Evaluate a merged HF model (no --base_model_path needed)
-  python evaluate_models.py \\
-      --model_path /path/to/checkpoints/global_step_200_lora_merged \\
-      --mode direct \\
-      --batch_size 32
-
-  # 4. Batch-evaluate many checkpoints under one directory
-  python evaluate_models.py \\
-      --checkpoint_dir /path/to/checkpoints/llama3_1_8b \\
-      --base_model_path /path/to/Meta-Llama-3.1-8B-Instruct \\
-      --mode think \\
-      --steps 75 150 225 300
+"""Inference driver for PA-GRPO. Runs a HF / LoRA / merged checkpoint over the
+test parquets and writes per-sample JSON for ``compute_metrics_*.py`` to score.
+Backend is vLLM by default (``--use_transformers`` for the slower fallback).
+Test data is read from ``$PAGRPO_DATASET_DIR`` or ``<repo_root>/dataset/test/``.
 """
 
 import os
 import re
+import glob
 import json
 import argparse
 import torch
@@ -93,22 +52,12 @@ def convert_to_serializable(obj):
 
 # ==================== 数据集配置 ====================
 # Default location is `<repo_root>/dataset/test/` relative to this file. Override
-# with the PAGRPO_DATASET_DIR environment variable to point elsewhere.
+# with the PAGRPO_DATASET_DIR environment variable to point elsewhere. Files are
+# auto-discovered: `*_<mode>.parquet` under DATASET_DIR is picked up at runtime.
 _DEFAULT_DATASET_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dataset", "test"
 )
 DATASET_DIR = os.environ.get("PAGRPO_DATASET_DIR", _DEFAULT_DATASET_DIR)
-
-DATASETS = {
-    "arc_challenge_24perm": {"options": 4, "files": {"think": "arc_challenge_24perm_think.parquet", "thinking": "arc_challenge_24perm_thinking.parquet", "direct": "arc_challenge_24perm_direct.parquet"}},
-    "gpqa_24perm": {"options": 4, "files": {"think": "gpqa_24perm_think.parquet", "thinking": "gpqa_24perm_thinking.parquet", "direct": "gpqa_24perm_direct.parquet"}},
-    "mmlu_redux_24perm": {"options": 4, "files": {"think": "mmlu_redux_24perm_think.parquet", "thinking": "mmlu_redux_24perm_thinking.parquet", "direct": "mmlu_redux_24perm_direct.parquet"}},
-    "chatbot_arena_24perm": {"options": 2, "files": {"think": "chatbot_arena_24perm_think.parquet", "thinking": "chatbot_arena_24perm_thinking.parquet", "direct": "chatbot_arena_24perm_direct.parquet"}},
-    "mtbench_2perms_shuffled_reordered": {"options": 2, "files": {"think": "mtbench_2perms_shuffled_reordered_think.parquet", "thinking": "mtbench_2perms_shuffled_reordered_thinking.parquet", "direct": "mtbench_2perms_shuffled_reordered_direct.parquet"}},
-    "rewardbench_pairwise_24perm": {"options": 2, "files": {"think": "rewardbench_pairwise_24perm_think.parquet", "thinking": "rewardbench_pairwise_24perm_thinking.parquet", "direct": "rewardbench_pairwise_24perm_direct.parquet"}},
-    "amazon_reviews_balanced": {"options": 2, "files": {"think": "amazon_reviews_balanced_think.parquet", "thinking": "amazon_reviews_balanced_thinking.parquet", "direct": "amazon_reviews_balanced_direct.parquet"}},
-    "llmbar_24perm": {"options": 2, "files": {"think": "llmbar_24perm_think.parquet", "thinking": "llmbar_24perm_thinking.parquet", "direct": "llmbar_24perm_direct.parquet"}},
-}
 
 
 # ==================== 工具函数 ====================
@@ -225,24 +174,8 @@ def detect_checkpoint_type(checkpoint_path):
 
 
 def detect_num_options_from_file(file_path):
-    """从parquet文件中检测选项数量"""
+    """Infer the number of MCQ options (2 or 4) from the prompt content."""
     try:
-        # 首先检查文件名是否包含已知数据集名称
-        file_basename = os.path.basename(file_path).lower()
-        
-        # 2选项数据集的关键词
-        two_option_keywords = ['mtbench', 'chatbot_arena', 'rewardbench', 'amazon_reviews', 'llmbar', 'judge_bench', 'preference_bench']
-        for keyword in two_option_keywords:
-            if keyword in file_basename:
-                return 2
-        
-        # 4选项数据集的关键词
-        four_option_keywords = ['arc', 'gpqa', 'mmlu']
-        for keyword in four_option_keywords:
-            if keyword in file_basename:
-                return 4
-        
-        # 如果无法从文件名判断，尝试从内容判断
         df = pd.read_parquet(file_path)
         if len(df) > 0:
             first_prompt = df.iloc[0]['prompt']
@@ -256,7 +189,7 @@ def detect_num_options_from_file(file_path):
                     if 'A or B' in content and 'C' not in content and 'D' not in content:
                         return 2
         return 4  # 默认4选项
-    except:
+    except Exception:
         return 4
 
 
@@ -957,8 +890,9 @@ def main():
     
     # 评估参数
     parser.add_argument("--mode", type=str, choices=["think", "thinking", "direct"], required=True)
-    parser.add_argument("--datasets", type=str, nargs="+", default=None)
-    parser.add_argument("--dataset_files", type=str, nargs="+", default=None)
+    parser.add_argument("--dataset_files", type=str, nargs="+", default=None,
+                        help="Specific parquet files to evaluate. If omitted, auto-discover "
+                             "$PAGRPO_DATASET_DIR/*_<mode>.parquet.")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--output_dir", type=str, default="./eval_results")
 
@@ -1013,26 +947,15 @@ def main():
                     "path": file_path,
                     "options": detect_num_options_from_file(file_path)
                 })
-    elif args.datasets:
-        for dataset_name in args.datasets:
-            if dataset_name in DATASETS:
-                info = DATASETS[dataset_name]
-                mode_file = info["files"].get(args.mode)
-                if mode_file:
-                    dataset_path = os.path.join(DATASET_DIR, mode_file)
-                    if os.path.exists(dataset_path):
-                        datasets_to_eval.append({
-                            "name": dataset_name, "path": dataset_path, "options": info["options"]
-                        })
     else:
-        for dataset_name, info in DATASETS.items():
-            mode_file = info["files"].get(args.mode)
-            if mode_file:
-                dataset_path = os.path.join(DATASET_DIR, mode_file)
-                if os.path.exists(dataset_path):
-                    datasets_to_eval.append({
-                        "name": dataset_name, "path": dataset_path, "options": info["options"]
-                    })
+        # Auto-discover all `*_<mode>.parquet` files under DATASET_DIR
+        pattern = os.path.join(DATASET_DIR, f"*_{args.mode}.parquet")
+        for dataset_path in sorted(glob.glob(pattern)):
+            datasets_to_eval.append({
+                "name": os.path.basename(dataset_path).replace('.parquet', ''),
+                "path": dataset_path,
+                "options": detect_num_options_from_file(dataset_path),
+            })
     
     if not datasets_to_eval:
         print("Error: no datasets found to evaluate")
